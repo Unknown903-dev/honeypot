@@ -1,0 +1,149 @@
+
+Cloudflare Tunnel + Node.js Honeypot
+Windows (PowerShell) Setup Guide
+================================
+
+Assumptions:
+- Windows 10 or Windows 11
+- PowerShell
+- Nothing has been created yet
+- Domain already added to Cloudflare
+- Honeypot listens on http://127.0.0.1:9000
+- No inbound ports should be exposed
+
+----------------------------------------------------------
+Install requirements
+----------------------------------------------------------
+
+# Install Node.js LTS from https://nodejs.org
+# (Use the installer, accept defaults)
+
+# Verify Node installation
+node -v
+npm -v
+
+----------------------------------------------------------
+Install Cloudflare Tunnel (cloudflared)
+----------------------------------------------------------
+
+# Install cloudflared using winget
+winget install --id Cloudflare.cloudflared
+
+# Verify installation
+cloudflared --version
+
+----------------------------------------------------------
+ Authenticate cloudflared (one-time)
+----------------------------------------------------------
+
+# Authenticate this machine with Cloudflare
+cloudflared tunnel login
+
+# This opens a browser login
+# After login, credentials are saved to:
+# C:\Users\<YOUR_USERNAME>\.cloudflared\
+
+----------------------------------------------------------
+Create the tunnel
+----------------------------------------------------------
+
+# Create a new tunnel
+cloudflared tunnel create honeypot-tunnel
+
+# Save the Tunnel UUID from the output
+# A credentials file will be created in:
+# C:\Users\<YOUR_USERNAME>\.cloudflared\<TUNNEL-UUID>.json
+
+# List tunnels to verify
+cloudflared tunnel list
+
+----------------------------------------------------------
+Route DNS to the tunnel
+----------------------------------------------------------
+
+# Create DNS route for the honeypot hostname
+cloudflared tunnel route dns honeypot-tunnel logs.yourdomain.com
+
+# This creates a proxied DNS record in Cloudflare
+
+----------------------------------------------------------
+Create config.yml  to find Tunnel uuid run "cloudflared tunnel list"
+----------------------------------------------------------
+
+# Create the config directory if it does not exist
+mkdir $env:USERPROFILE\.cloudflared -Force
+
+# Create the config file
+notepad $env:USERPROFILE\.cloudflared\config.yml
+
+# Paste the following (replace placeholders):
+
+tunnel: honeypot-tunnel
+credentials-file: C:\Users\<YOUR_USERNAME>\.cloudflared\<TUNNEL-UUID>.json
+
+ingress:
+  - hostname: subdomain.yourdomain.com
+    service: http://127.0.0.1:9000
+  - service: http_status:404
+
+# Save and close Notepad
+
+----------------------------------------------------------
+Setup the Node honeypot
+----------------------------------------------------------
+
+# Create honeypot directory
+mkdir honeypot
+cd honeypot
+
+# Install dependencies
+npm init -y
+npm install express
+
+# Place honeypot.js in this directory
+
+# Manual test (test only)
+node honeypot.js
+# Stop with Ctrl + C
+
+----------------------------------------------------------
+Test the tunnel (temporary)
+----------------------------------------------------------
+
+# Run the tunnel manually to test
+cloudflared tunnel run honeypot-tunnel
+
+# In another PowerShell window:
+curl http://127.0.0.1:9000
+curl https://subdomain.yourdomain.com
+
+# If successful, stop tunnel with Ctrl + C
+
+----------------------------------------------------------
+Run cloudflared persistently (Windows service)
+----------------------------------------------------------
+
+# Install cloudflared as a Windows service
+cloudflared service install
+
+# Start and enable service
+Start-Service cloudflared
+
+# Check service status
+Get-Service cloudflared
+
+----------------------------------------------------------
+IMPORTANT — Running the Node honeypot persistently
+----------------------------------------------------------
+
+# Windows does NOT automatically daemonize Node.js.
+# You must choose ONE option:
+
+
+# - Run `node honeypot.js` manually (testing only)
+# - This will stop when PowerShell closes
+
+----------------------------------------------------------
+Done
+----------------------------------------------------------
+

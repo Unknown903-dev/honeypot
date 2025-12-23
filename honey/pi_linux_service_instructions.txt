@@ -1,0 +1,193 @@
+
+Cloudflare Tunnel + Node.js Honeypot (Linux / Raspberry Pi)
+==========================================================
+
+Assumptions:
+- Fresh Raspberry Pi OS (Linux)
+- Nothing has been created yet
+- Domain is already added to Cloudflare
+- Honeypot listens on http://localhost:9000
+- No public ports should be exposed
+
+About:
+runs the honeypot as a service in linux
+----------------------------------------------------------
+Prepare the Raspberry Pi
+----------------------------------------------------------
+
+# Update the system
+sudo apt update && sudo apt upgrade -y
+
+# Install Node.js LTS (important: default apt node can be outdated)
+curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
+sudo apt install -y nodejs
+
+# Verify Node installation
+node -v
+npm -v
+
+----------------------------------------------------------
+ Install Cloudflare Tunnel (cloudflared)
+----------------------------------------------------------
+
+# Install cloudflared
+sudo apt install -y cloudflared
+
+# Verify installation
+cloudflared --version
+
+----------------------------------------------------------
+Authenticate cloudflared (one-time)
+----------------------------------------------------------
+
+# Authenticate this machine with Cloudflare
+cloudflared tunnel login
+
+# This opens a browser login and creates ~/.cloudflared/
+
+----------------------------------------------------------
+ Create the tunnel (only once)
+----------------------------------------------------------
+
+# Create a new tunnel
+cloudflared tunnel create honeypot-tunnel
+
+# Save the Tunnel UUID shown in output
+# Credentials file will be created at:
+# ~/.cloudflared/<TUNNEL-UUID>.json
+
+----------------------------------------------------------
+Route DNS to the tunnel
+----------------------------------------------------------
+
+# Create DNS route for the honeypot hostname
+cloudflared tunnel route dns honeypot-tunnel logs.yourdomain.com
+
+# This creates a proxied DNS record in Cloudflare
+
+----------------------------------------------------------
+Create config.yml
+----------------------------------------------------------
+
+# Ensure config directory exists
+mkdir -p ~/.cloudflared
+
+# Create config file
+nano ~/.cloudflared/config.yml
+
+# Paste the following (replace <TUNNEL-UUID> to find tunnel id run "cloudflared tunnel list" and hostname):
+
+tunnel: honeypot-tunnel
+credentials-file: /home/pi/.cloudflared/<TUNNEL-UUID>.json
+
+ingress:
+  - hostname: subdomain.yourdomain.com
+    service: http://localhost:9000
+  - service: http_status:404
+
+# Save and exit
+
+----------------------------------------------------------
+ Test the tunnel (temporary)
+----------------------------------------------------------
+
+# Run tunnel manually to test
+cloudflared tunnel run honeypot-tunnel
+
+# In another terminal:
+curl http://localhost:9000
+curl https://subdomain.yourdomain.com
+
+# If successful, stop with Ctrl+C
+
+----------------------------------------------------------
+Run cloudflared as a service
+----------------------------------------------------------
+
+# Install cloudflared systemd service
+sudo cloudflared service install
+
+# Enable and start service
+sudo systemctl enable cloudflared
+sudo systemctl start cloudflared
+
+# Check status
+sudo systemctl status cloudflared
+
+# View logs
+journalctl -u cloudflared -f
+
+----------------------------------------------------------
+Install the honeypot as a service
+----------------------------------------------------------
+
+# Create honeypot directory
+sudo mkdir -p /opt/honeypot
+sudo chown -R pi:pi /opt/honeypot
+
+# Copy honeypot.js into /opt/honeypot
+cd /opt/honeypot
+
+# Install dependencies
+npm install express
+
+# Test manually
+node honeypot.js
+# Stop with Ctrl+C
+
+----------------------------------------------------------
+Create restricted service user
+----------------------------------------------------------
+
+# Create non-login service user
+sudo useradd -r -s /usr/sbin/nologin honeypot
+
+# Change ownership to service user
+sudo chown -R honeypot:honeypot /opt/honeypot
+
+----------------------------------------------------------
+Create honeypot systemd service
+----------------------------------------------------------
+
+sudo nano /etc/systemd/system/honeypot.service
+
+# Paste:
+
+[Unit]
+Description=Node Honeypot Service
+After=network.target
+
+[Service]
+User=honeypot
+Group=honeypot
+WorkingDirectory=/opt/honeypot
+ExecStart=/usr/bin/node /opt/honeypot/honeypot.js
+Restart=always
+RestartSec=3
+Environment=NODE_ENV=production
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/honeypot
+
+[Install]
+WantedBy=multi-user.target
+
+----------------------------------------------------------
+Enable and start honeypot service
+----------------------------------------------------------
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now honeypot
+
+# Check status
+sudo systemctl status honeypot
+
+# View logs
+journalctl -u honeypot -f
+
+-----------------------------------
+All done
+-----------------------------------

@@ -1,0 +1,251 @@
+
+Cloudflare Tunnel + Node.js Honeypot
+Windows (PowerShell) Setup Guide — WITH Node Service (NSSM)
+==========================================================
+
+Assumptions:
+- Windows 10 or Windows 11
+- PowerShell (run as Administrator when installing services)
+- Nothing has been created yet
+- Domain already added to Cloudflare
+- Honeypot listens on http://127.0.0.1:9000
+- No inbound ports should be exposed
+
+Notes:
+- cloudflared can run as a Windows service via `cloudflared service install`
+- Node.js (honeypot.js) should also run as a service; recommended tool: NSSM
+
+About: 
+runs the honey pot as service on windows
+
+----------------------------------------------------------
+PART 1 — Install requirements
+----------------------------------------------------------
+
+# Install Node.js LTS from https://nodejs.org
+# (Use the installer, accept defaults)
+
+# Verify Node installation
+node -v
+npm -v
+
+----------------------------------------------------------
+PART 2 — Install Cloudflare Tunnel (cloudflared)
+----------------------------------------------------------
+
+# Install cloudflared using winget
+winget install --id Cloudflare.cloudflared
+
+# Verify installation
+cloudflared --version
+
+----------------------------------------------------------
+PART 3 — Authenticate cloudflared (one-time)
+----------------------------------------------------------
+
+# Authenticate this machine with Cloudflare
+cloudflared tunnel login
+
+# This opens a browser login
+# After login, credentials are saved to:
+# C:\Users\<YOUR_USERNAME>\.cloudflared\
+
+----------------------------------------------------------
+PART 4 — Create the tunnel
+----------------------------------------------------------
+
+# Create a new tunnel
+cloudflared tunnel create honeypot-tunnel
+
+# Save the Tunnel UUID from the output
+# A credentials file will be created in:
+# C:\Users\<YOUR_USERNAME>\.cloudflared\<TUNNEL-UUID>.json
+
+# List tunnels to verify
+cloudflared tunnel list
+
+----------------------------------------------------------
+PART 5 — Route DNS to the tunnel
+----------------------------------------------------------
+
+# Create DNS route for the honeypot hostname
+cloudflared tunnel route dns honeypot-tunnel logs.yourdomain.com
+
+# This creates a proxied DNS record in Cloudflare
+
+----------------------------------------------------------
+PART 6 — Create config.yml
+----------------------------------------------------------
+
+# Create the config directory if it does not exist
+mkdir $env:USERPROFILE\.cloudflared -Force
+
+# Create the config file
+notepad $env:USERPROFILE\.cloudflared\config.yml
+
+# Paste the following (replace placeholders):
+
+tunnel: honeypot-tunnel
+credentials-file: C:\Users\<YOUR_USERNAME>\.cloudflared\<TUNNEL-UUID>.json
+
+ingress:
+  - hostname: logs.yourdomain.com
+    service: http://127.0.0.1:9000
+  - service: http_status:404
+
+# Save and close Notepad
+
+----------------------------------------------------------
+PART 7 — Setup the Node honeypot
+----------------------------------------------------------
+
+# Create honeypot directory
+mkdir C:\honeypot -Force
+cd C:\honeypot
+
+# Install dependencies
+npm init -y
+npm install express
+
+# Place honeypot.js in C:\honeypot\honeypot.js
+
+# Manual test (test only)
+node .\honeypot.js
+# Stop with Ctrl + C
+
+----------------------------------------------------------
+PART 8 — Test the tunnel (temporary)
+----------------------------------------------------------
+
+# Run the tunnel manually to test
+cloudflared tunnel run honeypot-tunnel
+
+# In another PowerShell window:
+curl http://127.0.0.1:9000
+curl https://logs.yourdomain.com
+
+# If successful, stop tunnel with Ctrl + C
+
+----------------------------------------------------------
+PART 9 — Run cloudflared persistently (Windows service)
+----------------------------------------------------------
+
+# IMPORTANT: Run PowerShell as Administrator for service install
+
+# Install cloudflared as a Windows service
+cloudflared service install
+
+# Start service
+Start-Service cloudflared
+
+# Check service status
+Get-Service cloudflared
+
+# If you need logs, cloudflared typically logs to Windows Event Log / service output.
+# For quick status:
+cloudflared tunnel info honeypot-tunnel
+
+----------------------------------------------------------
+PART 10 — Run honeypot.js persistently as a Windows service (NSSM)
+----------------------------------------------------------
+
+# WHY NSSM:
+# - Windows does not daemonize Node automatically
+# - NSSM ("Non-Sucking Service Manager") runs any .exe (node.exe) as a service
+
+Step 10.1 — Install NSSM
+------------------------
+# Option A (recommended): Install via winget
+winget install --id NSSM.NSSM
+
+# Verify it is on PATH
+nssm --version
+
+# If winget is unavailable, download from:
+# https://nssm.cc/download
+# and put nssm.exe somewhere in PATH (e.g., C:\Windows\System32) or use full path.
+
+Step 10.2 — Create the Windows service for the honeypot
+-------------------------------------------------------
+# IMPORTANT: Run PowerShell as Administrator
+
+# Choose a service name (example: Honeypot)
+$ServiceName = "Honeypot"
+
+# Find node.exe path (copy the output path)
+where.exe node
+
+# Example node path (yours may differ):
+# C:\Program Files\nodejs\node.exe
+
+# Install the service (replace node path if needed)
+nssm install $ServiceName "C:\Program Files\nodejs\node.exe" "C:\honeypot\honeypot.js"
+
+Step 10.3 — Set working directory (important for relative paths)
+----------------------------------------------------------------
+nssm set $ServiceName AppDirectory "C:\honeypot"
+
+Step 10.4 — Set environment variables (optional)
+------------------------------------------------
+# Example: production mode
+nssm set $ServiceName AppEnvironmentExtra "NODE_ENV=production"
+
+Step 10.5 — Configure restart behavior (recommended)
+-----------------------------------------------------
+# Restart on exit/crash
+nssm set $ServiceName AppExit Default Restart
+
+Step 10.6 — Configure logs to files (recommended)
+--------------------------------------------------
+# This captures console.log output from honeypot.js
+mkdir C:\honeypot\logs -Force
+
+nssm set $ServiceName AppStdout "C:\honeypot\logs\honeypot-stdout.log"
+nssm set $ServiceName AppStderr "C:\honeypot\logs\honeypot-stderr.log"
+nssm set $ServiceName AppStdoutCreationDisposition 4
+nssm set $ServiceName AppStderrCreationDisposition 4
+
+# Optional: rotate logs by size (in bytes)
+# Example: 10MB
+nssm set $ServiceName AppRotateFiles 1
+nssm set $ServiceName AppRotateOnline 1
+nssm set $ServiceName AppRotateBytes 10485760
+
+Step 10.7 — Start and enable the honeypot service
+--------------------------------------------------
+Start-Service $ServiceName
+Set-Service $ServiceName -StartupType Automatic
+
+# Check status
+Get-Service $ServiceName
+
+Step 10.8 — Verify honeypot is running
+--------------------------------------
+# Local test
+curl http://127.0.0.1:9000
+
+# Domain test (through Cloudflare Tunnel)
+curl https://logs.yourdomain.com
+
+Step 10.9 — Stop / restart service (common ops)
+------------------------------------------------
+Stop-Service $ServiceName
+Start-Service $ServiceName
+Restart-Service $ServiceName
+
+Step 10.10 — Update honeypot.js
+-------------------------------
+# After editing C:\honeypot\honeypot.js, restart the service:
+Restart-Service $ServiceName
+
+Step 10.11 — Remove the service (if needed)
+------------------------------------------
+# Stop it first
+Stop-Service $ServiceName
+
+# Remove via NSSM
+nssm remove $ServiceName confirm
+
+----------------------------------------------------------
+Done
+----------------------------------------------------------
