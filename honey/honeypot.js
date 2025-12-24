@@ -6,7 +6,7 @@ Features:
     - hard-block for extreme floods
     - Explicit "soft_flag" and "hard_block" event logs
     - Local-only admin endpoint to check IP state
-*/
+**/
 
 const express = require("express");
 const crypto = require("crypto");

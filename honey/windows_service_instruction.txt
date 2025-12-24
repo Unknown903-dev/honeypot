@@ -161,6 +161,9 @@ winget install --id NSSM.NSSM
 # Verify it is on PATH
 nssm --version
 
+if it doesnt work after install even though it successfully 
+installed make sure you reopen powershell
+
 # If winget is unavailable, download from:
 # https://nssm.cc/download
 # and put nssm.exe somewhere in PATH (e.g., C:\Windows\System32) or use full path.
